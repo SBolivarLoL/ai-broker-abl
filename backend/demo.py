@@ -38,7 +38,7 @@ if c:
 section("2 — News / earnings summary (AAPL)")
 n = show(client.get("/api/ai/news/AAPL"))
 if n:
-    print(f"  ({n['article_count']} articles)\n  " + n["summary"].replace("\n", "\n  "))
+    print("  " + n["summary"].replace("\n", "\n  "))
 
 # ── 3. Natural-language -> order intent parser ────────────────────────────────
 section("3 — Natural-language order parser")
