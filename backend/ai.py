@@ -158,6 +158,40 @@ def ai_market_news():
         raise HTTPException(500, str(e))
 
 
+# ── 2c. Portfolio news — every holding: latest news + why it moved ────────────
+@router.get("/api/ai/portfolio-news")
+def ai_portfolio_news():
+    """For each company you own: the latest news AND why it likely moved (live web search)."""
+    try:
+        portfolio = _build_portfolio()
+        symbols = [p["symbol"] for p in portfolio["positions"]]
+        if not symbols:
+            return {
+                "holdings": [],
+                "summary": "You have no holdings yet, so there's nothing to brief. "
+                           "Buy a position first, or check /api/ai/market-news for the day's biggest headlines.",
+            }
+        moves = {}
+        for s in symbols:
+            try:
+                moves[s] = _recent_move(s)
+            except Exception:
+                moves[s] = {"change_pct": None}
+        lines = "\n".join(
+            f"- {s}: recent move "
+            + (f"{moves[s]['change_pct']:+.2f}%" if moves[s].get("change_pct") is not None else "unknown")
+            for s in symbols
+        )
+        user = (
+            f"Today is {_today()}. My portfolio holdings and their recent moves:\n{lines}\n\n"
+            f"For each holding, use web search to find the latest news and explain what's happening and "
+            f"why it likely moved recently."
+        )
+        return {"holdings": symbols, "summary": _ask_with_search(P.PORTFOLIO_NEWS_SYSTEM, user, max_tokens=1600)}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 # ── 3. Natural-language -> order intent parser (stops before executing) ───────
 class ParseRequest(BaseModel):
     text: str

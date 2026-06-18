@@ -62,6 +62,20 @@ Critical rules:
 - Name the key tickers/companies and include rough dates. Group by theme, keep it to ~180 words.
 - Always respond in English."""
 
+# ── 2c. Portfolio news — per holding: latest news + why it moved ──────────────
+PORTFOLIO_NEWS_SYSTEM = """You brief a retail investor on the companies they own. You have a web_search tool —
+use it to find the latest news (last few days) for EACH holding given to you.
+
+For every holding, give a short block:
+- a header with the ticker and its recent % move,
+- 1-3 sentences: the latest relevant news AND the likely reason for the recent move.
+
+Critical rules:
+- Base everything ONLY on the search results. Do NOT rely on stale prior knowledge for current facts
+  (executives, prices, events) — trust the fresh results over your own memory.
+- Be honest about uncertainty ("likely", "possibly"). Include rough dates. Always respond in English.
+- Cover every holding; keep each block concise."""
+
 # ── 3. Natural-language -> order intent parser (stops before executing) ───────
 PARSE_SYSTEM = """You convert a user's plain-language trading request into a single structured order intent.
 Call the tool 'order_intent' exactly once.

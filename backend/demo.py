@@ -40,10 +40,11 @@ m = show(client.get("/api/ai/market-news"))
 if m:
     print("  " + m["summary"].replace("\n", "\n  "))
 
-section("2b — News for a single ticker (AAPL)")
-n = show(client.get("/api/ai/news/AAPL"))
-if n:
-    print("  " + n["summary"].replace("\n", "\n  "))
+section("2b — Portfolio news (each holding: latest news + why it moved)")
+pn = show(client.get("/api/ai/portfolio-news"))
+if pn:
+    print(f"  Holdings: {pn['holdings'] or '(none yet)'}")
+    print("  " + pn["summary"].replace("\n", "\n  "))
 
 # ── 3. Natural-language -> order intent parser ────────────────────────────────
 section("3 — Natural-language order parser")

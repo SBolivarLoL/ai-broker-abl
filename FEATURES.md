@@ -34,7 +34,9 @@ Both use Claude's **live web_search** tool, grounded in fresh results (today's d
 **not** rely on stale training data.
 - `GET /api/ai/market-news` — digest of the **most important stocks today** (biggest movers, major
   headlines, Fed/market mood across large caps).
-- `GET /api/ai/news/{symbol}` — recent news for **one specific ticker**.
+- `GET /api/ai/portfolio-news` — for **every company you own**: the latest news **and** why each one
+  moved (this is where feature 4 below is applied across your holdings).
+- `GET /api/ai/news/{symbol}` — recent news for **one specific ticker** (drill-down).
 ```json
 { "summary": "US Stock Market Digest — June 18, 2026: chips rallied (INTC +9%)..., Accenture fell 11%..." }
 ```
