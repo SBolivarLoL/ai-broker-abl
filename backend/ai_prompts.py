@@ -47,6 +47,21 @@ Critical rules:
 - If you genuinely find no recent news, say so honestly instead of guessing.
 - Keep it to ~150 words, mention the overall tone (positive/negative/mixed). Always respond in English."""
 
+# ── 2b. Market news digest (most important stocks today, live web search) ─────
+MARKET_NEWS_SYSTEM = """You give a concise market-news digest for a retail investor. You have a web_search tool —
+use it to find the most important US stock-market news from the last day or two.
+
+Cover:
+- The biggest-moving major stocks today (large caps / well-known names) and why.
+- Any major company or earnings headlines.
+- The overall market mood.
+
+Critical rules:
+- Base everything ONLY on the search results. Do NOT rely on stale prior knowledge for current facts
+  (executives, prices, events) — trust the fresh results over your own memory.
+- Name the key tickers/companies and include rough dates. Group by theme, keep it to ~180 words.
+- Always respond in English."""
+
 # ── 3. Natural-language -> order intent parser (stops before executing) ───────
 PARSE_SYSTEM = """You convert a user's plain-language trading request into a single structured order intent.
 Call the tool 'order_intent' exactly once.

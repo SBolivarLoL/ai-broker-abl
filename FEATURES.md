@@ -29,12 +29,14 @@ human advisor, **not** a table of metrics.
 { "commentary": "You're holding three large-cap tech names, which means little real diversification..." }
 ```
 
-### 2. News / earnings summary — `GET /api/ai/news/{symbol}`
-Uses Claude's **live web_search** tool to find the most recent news for the ticker and summarize it in
-plain language. Grounded in fresh search results (with today's date injected), so it does **not** rely on
-stale training data.
+### 2. News / earnings summary — live web search
+Both use Claude's **live web_search** tool, grounded in fresh results (today's date injected), so they do
+**not** rely on stale training data.
+- `GET /api/ai/market-news` — digest of the **most important stocks today** (biggest movers, major
+  headlines, Fed/market mood across large caps).
+- `GET /api/ai/news/{symbol}` — recent news for **one specific ticker**.
 ```json
-{ "symbol": "AAPL", "summary": "As of June 18, 2026, Apple's stock dropped ~1% on..." }
+{ "summary": "US Stock Market Digest — June 18, 2026: chips rallied (INTC +9%)..., Accenture fell 11%..." }
 ```
 
 ### 3. Natural-language → order-intent parser — `POST /api/ai/parse-order`

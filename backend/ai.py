@@ -145,6 +145,19 @@ def ai_news(symbol: str):
         raise HTTPException(500, str(e))
 
 
+# ── 2b. Market news digest — most important stocks today (LIVE web search) ────
+@router.get("/api/ai/market-news")
+def ai_market_news():
+    try:
+        user = (
+            f"Today is {_today()}. Use web search to find the most important US stock-market news and the "
+            f"biggest-moving major stocks from the last day or two, and give me a digest."
+        )
+        return {"summary": _ask_with_search(P.MARKET_NEWS_SYSTEM, user, max_tokens=1100)}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 # ── 3. Natural-language -> order intent parser (stops before executing) ───────
 class ParseRequest(BaseModel):
     text: str

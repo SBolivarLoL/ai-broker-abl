@@ -35,7 +35,12 @@ if c:
     print("  " + c["commentary"].replace("\n", "\n  "))
 
 # ── 2. News / earnings summary per ticker ─────────────────────────────────────
-section("2 — News / earnings summary (AAPL)")
+section("2 — Market news digest (most important stocks today)")
+m = show(client.get("/api/ai/market-news"))
+if m:
+    print("  " + m["summary"].replace("\n", "\n  "))
+
+section("2b — News for a single ticker (AAPL)")
 n = show(client.get("/api/ai/news/AAPL"))
 if n:
     print("  " + n["summary"].replace("\n", "\n  "))
