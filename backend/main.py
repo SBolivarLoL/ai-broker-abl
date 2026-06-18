@@ -30,6 +30,10 @@ data_client = StockHistoricalDataClient(
 app = FastAPI(title="AI Broker – Paper Trading")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
+# Objectives 4, 5, 6 (AI co-pilot, portfolio intelligence, agentic agent) — zie ai.py
+from ai import router as ai_router  # noqa: E402
+app.include_router(ai_router)
+
 
 # ── 1. Connected broker account ───────────────────────────────────────────────
 
