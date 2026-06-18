@@ -30,9 +30,11 @@ human advisor, **not** a table of metrics.
 ```
 
 ### 2. News / earnings summary — `GET /api/ai/news/{symbol}`
-Pulls recent news for one ticker (Alpaca News API) and summarizes it in plain language.
+Uses Claude's **live web_search** tool to find the most recent news for the ticker and summarize it in
+plain language. Grounded in fresh search results (with today's date injected), so it does **not** rely on
+stale training data.
 ```json
-{ "symbol": "AAPL", "summary": "Recent coverage focuses on...", "article_count": 7 }
+{ "symbol": "AAPL", "summary": "As of June 18, 2026, Apple's stock dropped ~1% on..." }
 ```
 
 ### 3. Natural-language → order-intent parser — `POST /api/ai/parse-order`
@@ -85,7 +87,7 @@ python backend/demo.py            # shows all four features
 - **All advisory, no execution** → these are objective-4 AI helpers; placing orders stays in the
   order ticket (obj 3). Clean separation, and no overlap with the values/ESG screening (obj 7).
 - **Parser outputs the teammate's order shape** → it drops straight into the existing order form.
-- **News & price-move come from Alpaca; the wording comes from Claude** → no scraping needed.
+- **News comes from live web search (Claude `web_search`); the price move comes from Alpaca bars** → always recent, no scraping needed.
 - **Keys in a gitignored `.env`** → never in git, never in the browser.
 
 ## Status / to do

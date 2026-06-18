@@ -6,9 +6,12 @@ main.py loads with `app.include_router(router)`.
 
 Endpoints:
   GET  /api/ai/commentary        -> 1. natural-language commentary on your holdings
-  GET  /api/ai/news/{symbol}     -> 2. plain-language news/earnings summary for a ticker
+  GET  /api/ai/news/{symbol}     -> 2. summary of the LATEST news (live web search)
   POST /api/ai/parse-order       -> 3. natural language -> structured order intent (prefills the order ticket; does NOT execute)
-  GET  /api/ai/why-moved/{symbol}-> 4. AI explanation of a recent price move
+  GET  /api/ai/why-moved/{symbol}-> 4. AI explanation of a recent price move (live web search)
+
+News & "why moved" use Claude's web_search tool so they reflect the most recent
+information instead of stale training data or stale cached news.
 
 Needs secret: ANTHROPIC_API_KEY (plus the existing ALPACA_* keys).
 """
@@ -35,19 +38,33 @@ _trading = TradingClient(os.getenv("ALPACA_API_KEY"), os.getenv("ALPACA_SECRET_K
 _data = StockHistoricalDataClient(os.getenv("ALPACA_API_KEY"), os.getenv("ALPACA_SECRET_KEY"))
 _claude = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY from the environment
 
-# News client is optional — wrapped so a missing/renamed import never breaks the app.
-try:
-    from alpaca.data.historical.news import NewsClient
-    from alpaca.data.requests import NewsRequest
-    _news = NewsClient(os.getenv("ALPACA_API_KEY"), os.getenv("ALPACA_SECRET_KEY"))
-except Exception:
-    _news = None
-    NewsRequest = None
+# Claude's live web-search tool — gives us fresh news instead of stale data.
+_WEB_SEARCH = {"type": "web_search_20260209", "name": "web_search"}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def _text_of(content) -> str:
-    return "\n".join(b.text for b in content if b.type == "text").strip()
+    return "\n".join(b.text for b in content if getattr(b, "type", None) == "text").strip()
+
+
+def _today() -> str:
+    return datetime.now().strftime("%Y-%m-%d")
+
+
+def _ask_with_search(system: str, user: str, max_tokens: int = 800) -> str:
+    """Call Claude with the live web-search tool; let it run its searches to completion."""
+    messages = [{"role": "user", "content": user}]
+    resp = None
+    for _ in range(4):  # web_search may pause_turn; resume until done
+        resp = _claude.messages.create(
+            model=P.MODEL, max_tokens=max_tokens, system=system,
+            tools=[_WEB_SEARCH], messages=messages,
+        )
+        if resp.stop_reason == "pause_turn":
+            messages.append({"role": "assistant", "content": resp.content})
+            continue
+        break
+    return _text_of(resp.content)
 
 
 def _build_portfolio() -> dict:
@@ -78,26 +95,6 @@ def _mid_price(symbol: str) -> Optional[float]:
     if bid and ask:
         return (bid + ask) / 2
     return ask or bid
-
-
-def _get_news(symbol: str, limit: int = 10) -> list[dict]:
-    if not _news or not NewsRequest:
-        return []
-    res = _news.get_news(NewsRequest(symbols=symbol.upper(), limit=limit))
-    items = getattr(res, "news", None)
-    if items is None and hasattr(res, "data") and isinstance(res.data, dict):
-        items = res.data.get("news", [])
-    out = []
-    for it in (items or []):
-        created = getattr(it, "created_at", None)
-        out.append({
-            "headline": getattr(it, "headline", ""),
-            "summary": getattr(it, "summary", ""),
-            "source": getattr(it, "source", ""),
-            "url": getattr(it, "url", ""),
-            "created_at": created.isoformat() if hasattr(created, "isoformat") else str(created),
-        })
-    return out
 
 
 def _recent_move(symbol: str) -> dict:
@@ -134,21 +131,16 @@ def ai_commentary():
         raise HTTPException(500, str(e))
 
 
-# ── 2. News / earnings summary per ticker ─────────────────────────────────────
+# ── 2. News / earnings summary per ticker (LIVE web search) ───────────────────
 @router.get("/api/ai/news/{symbol}")
 def ai_news(symbol: str):
     try:
-        news = _get_news(symbol)
-        if news:
-            joined = "\n".join(f"- {n['headline']} ({n['source']}): {n['summary'][:300]}" for n in news)
-            user = f"Recent news for {symbol.upper()}:\n{joined}\n\nSummarize it."
-        else:
-            user = f"There is no recent news available for {symbol.upper()}. Say so briefly."
-        resp = _claude.messages.create(
-            model=P.MODEL, max_tokens=500, system=P.NEWS_SYSTEM,
-            messages=[{"role": "user", "content": user}],
+        sym = symbol.upper()
+        user = (
+            f"Today is {_today()}. Use web search to find the most recent news about the stock {sym} "
+            f"(the company behind that ticker) from the last few days, and summarize it."
         )
-        return {"symbol": symbol.upper(), "summary": _text_of(resp.content), "article_count": len(news)}
+        return {"symbol": sym, "summary": _ask_with_search(P.NEWS_SYSTEM, user, max_tokens=900)}
     except Exception as e:
         raise HTTPException(500, str(e))
 
@@ -193,7 +185,6 @@ def ai_parse_order(req: ParseRequest):
         if not intent:
             raise HTTPException(500, "could not parse the request")
 
-        # Build a ticket that matches your teammate's POST /api/orders shape.
         symbol = intent["symbol"].upper()
         ticket = {
             "symbol": symbol,
@@ -207,14 +198,13 @@ def ai_parse_order(req: ParseRequest):
         if intent["amount_type"] == "shares":
             ticket["qty"] = intent["amount"]
         else:
-            # cash amount -> approximate qty using the current price (NOTE: Alpaca is USD).
             notional = intent["amount"]
             price = _mid_price(symbol)
             if price:
                 ticket["qty"] = round(notional / price, 4)
 
         return {
-            "order_ticket": ticket,        # prefill the order form with this
+            "order_ticket": ticket,
             "notional": notional,
             "currency": intent.get("currency", "USD"),
             "needs_clarification": intent.get("needs_clarification", False),
@@ -229,22 +219,22 @@ def ai_parse_order(req: ParseRequest):
         raise HTTPException(500, str(e))
 
 
-# ── 4. "Why did this stock move?" ─────────────────────────────────────────────
+# ── 4. "Why did this stock move?" (LIVE web search) ───────────────────────────
 @router.get("/api/ai/why-moved/{symbol}")
 def ai_why_moved(symbol: str):
     try:
-        move = _recent_move(symbol)
-        news = _get_news(symbol, limit=8)
-        headlines = "\n".join(f"- {n['headline']}" for n in news) or "(no recent headlines available)"
+        sym = symbol.upper()
+        move = _recent_move(sym)
         if move["change_pct"] is None:
-            move_txt = "Recent price move: unknown (not enough data)."
+            move_txt = "I could not determine the exact recent price move."
         else:
-            move_txt = (f"{symbol.upper()} moved {move['change_pct']:+.2f}% "
+            move_txt = (f"{sym} moved {move['change_pct']:+.2f}% recently "
                         f"(from ${move['prev_close']:.2f} to ${move['last_close']:.2f}).")
-        resp = _claude.messages.create(
-            model=P.MODEL, max_tokens=500, system=P.WHY_MOVED_SYSTEM,
-            messages=[{"role": "user", "content": f"{move_txt}\n\nRecent headlines:\n{headlines}\n\nWhy did it likely move?"}],
+        user = (
+            f"Today is {_today()}. {move_txt}\n\n"
+            f"Use web search to find the latest news from the last few days that explains this move, "
+            f"then explain why {sym} likely moved."
         )
-        return {"symbol": symbol.upper(), "move": move, "explanation": _text_of(resp.content)}
+        return {"symbol": sym, "move": move, "explanation": _ask_with_search(P.WHY_MOVED_SYSTEM, user, max_tokens=900)}
     except Exception as e:
         raise HTTPException(500, str(e))
