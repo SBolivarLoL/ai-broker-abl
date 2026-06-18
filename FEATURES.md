@@ -1,7 +1,10 @@
-# AI Broker — Features (objectives 4, 5, 6) on top of the base (1, 2, 3)
+# AI Broker — AI features (objective 4, advisory) on top of the base (1, 2, 3)
 
-This file explains **what** we built, **how** it works, **why**, and **what it looks like**.
+This explains **what** we built, **how** it works, **why**, and **what it looks like**.
 That also covers **objective 8 (Explainability)**.
+
+All four features are **advisory** — they never place orders. Executing stays with the
+order ticket (objective 3, your teammate's `POST /api/orders`).
 
 ## How it fits together
 
@@ -9,110 +12,84 @@ That also covers **objective 8 (Explainability)**.
 Lovable frontend (browser)              FastAPI backend (backend/)              External APIs
 ──────────────────────────              ─────────────────────────               ─────────────
 fetch("http://localhost:8000/...")  ►   main.py   (obj 1,2,3 — teammate)  ►  Alpaca (account/prices/orders)
-                                        ai.py     (obj 4,5,6 — us)        ►  Alpaca (data) + Claude API
+                                        ai.py     (obj 4 — us)            ►  Alpaca (positions/news/bars) + Claude API
 ```
 
-- **One backend.** Our features are FastAPI endpoints in `backend/ai.py`, wired into
-  `main.py` with `app.include_router(ai_router)`. We did not rewrite the teammate's base.
-- **Keys live server-side** in `.env` (repo root, **gitignored**): `ALPACA_API_KEY`,
-  `ALPACA_SECRET_KEY`, `ANTHROPIC_API_KEY`. Never in the browser, never in git.
-- **Model:** `claude-sonnet-4-6` (fast + cheap enough; see `ai_prompts.py`).
+- Our features are FastAPI endpoints in `backend/ai.py`, wired into `main.py` with one line
+  (`app.include_router(ai_router)`). We don't rewrite the teammate's base.
+- Keys live server-side in `.env` (repo root, **gitignored**): `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, `ANTHROPIC_API_KEY`.
+- Model: `claude-sonnet-4-6`. Prompts live in `ai_prompts.py`.
 
-## Data sources (where does the info come from?)
+## The four features
 
-| What | Source |
-|------|--------|
-| Prices, positions, orders | **Alpaca** (already wired in `main.py`) |
-| Reasoning / ideas / analysis | **Claude API** |
-| (optional) current news | Claude `web_search` tool — can be enabled in `ai.py` (`/api/ai/chat`) |
+### 1. Portfolio commentary — `GET /api/ai/commentary`
+Natural-language commentary on what you hold and how concentrated/diversified you are — like a
+human advisor, **not** a table of metrics.
+```json
+{ "commentary": "You're holding three large-cap tech names, which means little real diversification..." }
+```
 
-You don't scrape anything yourself: Alpaca provides market+portfolio, Claude does the thinking.
+### 2. News / earnings summary — `GET /api/ai/news/{symbol}`
+Pulls recent news for one ticker (Alpaca News API) and summarizes it in plain language.
+```json
+{ "symbol": "AAPL", "summary": "Recent coverage focuses on...", "article_count": 7 }
+```
 
-## Our endpoints — what they do and what they look like
-
-### Objective 5 — Portfolio Intelligence (risk metrics)
-`GET /api/portfolio/metrics` — pure calculation on your Alpaca positions, no AI needed.
+### 3. Natural-language → order-intent parser — `POST /api/ai/parse-order`
+Turns plain text into a structured order intent that **prefills the order ticket** (objective 3).
+It **stops before executing** — your teammate's `/api/orders` does the actual placing after the user confirms.
+```bash
+curl -X POST localhost:8000/api/ai/parse-order -H "Content-Type: application/json" \
+  -d '{"text":"buy 100 euros of Apple"}'
+```
 ```json
 {
-  "total_value": 100000, "cash_pct": 100, "positions_count": 0,
-  "largest_position_pct": 0, "top_holding": "—",
-  "diversification_score": 100, "day_pl": 0, "day_pl_pct": 0
+  "order_ticket": { "symbol": "AAPL", "side": "buy", "order_type": "market", "qty": 0.34, "time_in_force": "day", "limit_price": null },
+  "notional": 100, "currency": "EUR",
+  "interpretation": "BUY $100 of AAPL (market)",
+  "needs_clarification": false
 }
 ```
+> Note: Alpaca trades in USD, so a cash amount is treated as USD notional and converted to an
+> approximate `qty` using the current price. The frontend uses `order_ticket` to fill the form.
 
-### Objective 4 — AI Co-pilot (advisory, NEVER places orders)
-`POST /api/ai/chat` — free-form Q&A about your portfolio.
-```bash
-curl -X POST localhost:8000/api/ai/chat -H "Content-Type: application/json" \
-  -d '{"messages":[{"role":"user","content":"What is my biggest risk?"}]}'
-# -> { "reply": "Your portfolio is 100% cash..." }
-```
-
-`POST /api/ai/ideas` — structured trade ideas (Claude calls a tool).
+### 4. "Why did this stock move?" — `GET /api/ai/why-moved/{symbol}`
+Combines the recent price move (daily bars) with recent headlines and explains the likely drivers,
+honest about uncertainty.
 ```json
-{ "ideas": [
-  { "ticker": "SPY", "side": "buy", "notional": 30000, "rationale": "Broad market base..." }
-]}
+{ "symbol": "AAPL", "move": { "change_pct": -2.1, "last_close": 288.0, "prev_close": 294.2 },
+  "explanation": "The ~2% drop likely reflects..." }
 ```
-
-`GET /api/ai/review` — portfolio analysis in plain language (bridge between obj 4 and 5).
-
-### Objective 6 — Agentic trading agent  ← "tell the AI to buy stocks"
-`POST /api/ai/agent` — agentic loop with tool use. Two phases:
-
-1. **Propose** (`approve=false`): you give a plain-English instruction; the agent fetches
-   quotes (`get_quote`) and proposes orders.
-```bash
-curl -X POST localhost:8000/api/ai/agent -H "Content-Type: application/json" \
-  -d '{"instruction":"Buy $20,000 of AAPL and $10,000 of NVDA","approve":false}'
-# -> { "message":"I propose...", "proposed_orders":[ {...} ], "executed_orders":[] }
-```
-2. **Execute** (`approve=true`): you send the approved orders back; the agent places them via Alpaca.
-```bash
-curl -X POST localhost:8000/api/ai/agent -H "Content-Type: application/json" \
-  -d '{"approve":true,"approved_orders":[{"ticker":"AAPL","side":"buy","notional":20000,"rationale":"..."}]}'
-# -> { "message":"Placed.", "proposed_orders":[], "executed_orders":[ {...} ] }
-```
-
-This is exactly "tell the AI what you want → say yes → the AI does it". **Obj 4 advises, obj 6 executes.**
-The values/ESG screening (obj 7) is intentionally **not** here — that's a separate feature.
 
 ## What it looks like for the user (Lovable frontend)
 
-The Lovable site renders these endpoints as 4 panels:
-- **Market View** (obj 2) → `/api/prices` + `/api/prices/{sym}/bars` (teammate's base).
-- **AI Co-pilot** (obj 4) → chat box (`/api/ai/chat`) + "Trade ideas" button (`/api/ai/ideas`).
-- **Portfolio Intelligence** (obj 5) → metric cards (`/api/portfolio/metrics`) + "Explain with AI" (`/api/ai/review`).
-- **Trading Agent** (obj 6) → instruction field → list of proposed orders → green "Approve & execute" button.
-
-In Lovable you point the fetch base URL at the backend (locally `http://localhost:8000`).
+- **Portfolio panel** → "Explain my portfolio" button → `/api/ai/commentary`.
+- **Per-stock view** → "Summarize news" → `/api/ai/news/{symbol}`, and "Why did it move?" → `/api/ai/why-moved/{symbol}`.
+- **Order ticket** → a text box "type your order in plain English" → `/api/ai/parse-order` fills the
+  symbol/side/qty fields; the user reviews and clicks the existing Buy/Sell button (obj 3) to actually place it.
 
 ## Run it (locally)
 
 ```bash
 pip install -r backend/requirements.txt
 # fill in .env in the repo root (ALPACA_* + ANTHROPIC_API_KEY)
-python backend/demo.py            # shows obj 1,2,4,5,6 in one run
-python backend/demo.py --execute  # also lets the agent actually place a paper order
-# or the clickable UI:
-./run.sh                          # http://localhost:8000
-open http://localhost:8000/docs   # Swagger: try every endpoint
+python backend/demo.py            # shows all four features
+./run.sh                          # http://localhost:8000  (then open /docs)
 ```
 
 > ⚠️ In a sandbox with egress restrictions Alpaca/Claude returns a network error
-> ("host not in allowlist"). Locally, or in an environment with internet, it works.
+> ("host not in allowlist"). Locally it works.
 
 ## Key design choices (why)
 
-- **AI as a separate router (`ai.py`)** → we barely touch the teammate's base (1 line in `main.py`).
-- **`claude-sonnet-4-6`** instead of Opus → fast and cheap, plenty for these tasks.
-- **Obj 4 never places orders; obj 6 does (after approval)** → clear split advisory vs. agentic.
-- **Risk metrics in pure Python** → no AI call needed, instant and free.
+- **All advisory, no execution** → these are objective-4 AI helpers; placing orders stays in the
+  order ticket (obj 3). Clean separation, and no overlap with the values/ESG screening (obj 7).
+- **Parser outputs the teammate's order shape** → it drops straight into the existing order form.
+- **News & price-move come from Alpaca; the wording comes from Claude** → no scraping needed.
 - **Keys in a gitignored `.env`** → never in git, never in the browser.
 
 ## Status / to do
 
-- [ ] Fill in `ANTHROPIC_API_KEY` in `.env`
-- [ ] Regenerate the keys that were shared in chat (Alpaca + Anthropic) and put the new ones in `.env`
-- [ ] Point the Lovable frontend's 4 panels at the backend
-- [ ] Optional: enable the `web_search` tool in `/api/ai/chat` for live news
+- [ ] Fill in `ANTHROPIC_API_KEY` in `.env`; regenerate the keys shared earlier in chat
+- [ ] Wire the four buttons into the Lovable frontend
+- [ ] Optional: enable Claude's `web_search` tool for "why-moved" when Alpaca news is thin

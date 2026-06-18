@@ -1,24 +1,18 @@
 """
-DEMO — test all features locally in one run, without typing separate curl commands.
+DEMO — try the four AI features locally in one run.
 
 Usage:
     pip install -r backend/requirements.txt
     # fill in .env in the repo root (ALPACA_* + ANTHROPIC_API_KEY)
-    python backend/demo.py              # everything except actually placing orders
-    python backend/demo.py --execute    # also let the agent EXECUTE its proposed buy (paper money!)
+    python backend/demo.py
 
-The script uses FastAPI's TestClient, so you don't have to start uvicorn separately.
+Uses FastAPI's TestClient, so you don't need to start uvicorn separately.
+None of these features place orders — they are all advisory.
 """
-import sys
 from fastapi.testclient import TestClient
 from main import app
 
 client = TestClient(app)
-EXECUTE = "--execute" in sys.argv
-
-# The agent example: a plain-English buy instruction. This is the core team idea —
-# "tell the AI to buy certain stocks" -> it proposes -> you approve -> it executes.
-AGENT_INSTRUCTION = "Buy $20,000 of AAPL and $10,000 of NVDA to start my portfolio."
 
 
 def section(title):
@@ -34,70 +28,36 @@ def show(resp):
     return resp.json()
 
 
-# ── Objective 1/2: base (from your teammate) ──────────────────────────────────
-section("OBJECTIVE 1 — Account (base)")
-acct = show(client.get("/api/account"))
-if acct:
-    print(f"  Cash: ${acct['cash']:.2f} | Value: ${acct['portfolio_value']:.2f} | "
-          f"Day P/L: ${acct['day_pnl']:.2f} ({acct['day_pnl_pct']:.2f}%)")
+# ── 1. Portfolio commentary (natural language) ────────────────────────────────
+section("1 — Portfolio commentary")
+c = show(client.get("/api/ai/commentary"))
+if c:
+    print("  " + c["commentary"].replace("\n", "\n  "))
 
-section("OBJECTIVE 2 — Prices (base)")
-prices = show(client.post("/api/prices", json={"symbols": ["AAPL", "MSFT", "SPY"]}))
-if prices:
-    for sym, q in prices.items():
-        print(f"  {sym}: mid ${q['mid']}")
+# ── 2. News / earnings summary per ticker ─────────────────────────────────────
+section("2 — News / earnings summary (AAPL)")
+n = show(client.get("/api/ai/news/AAPL"))
+if n:
+    print(f"  ({n['article_count']} articles)\n  " + n["summary"].replace("\n", "\n  "))
 
-# ── Objective 5: risk metrics (ours) ──────────────────────────────────────────
-section("OBJECTIVE 5 — Portfolio Intelligence (risk metrics)")
-metrics = show(client.get("/api/portfolio/metrics"))
-if metrics:
-    print(f"  Total value: ${metrics['total_value']:.0f}")
-    print(f"  Cash: {metrics['cash_pct']:.0f}%  |  Positions: {metrics['positions_count']}")
-    print(f"  Largest position: {metrics['top_holding']} ({metrics['largest_position_pct']:.0f}%)")
-    print(f"  Diversification score: {metrics['diversification_score']}/100")
+# ── 3. Natural-language -> order intent parser ────────────────────────────────
+section("3 — Natural-language order parser")
+text = "buy 100 euros of Apple"
+print(f'  Input: "{text}"')
+p = show(client.post("/api/ai/parse-order", json={"text": text}))
+if p:
+    print(f"  Interpretation: {p['interpretation']}")
+    print(f"  Order ticket (prefills teammate's order form): {p['order_ticket']}")
+    if p["needs_clarification"]:
+        print(f"  Needs clarification: {p['clarification']}")
+    print("  (NOTE: nothing executed — this only fills the order ticket.)")
 
-# ── Objective 4: AI co-pilot (ours) ───────────────────────────────────────────
-section("OBJECTIVE 4 — AI portfolio review")
-review = show(client.get("/api/ai/review"))
-if review:
-    print("  " + review["review"].replace("\n", "\n  "))
-
-section("OBJECTIVE 4 — AI trade ideas")
-ideas = show(client.post("/api/ai/ideas"))
-if ideas:
-    for i in ideas["ideas"]:
-        amt = f"{i.get('qty')} shares" if i.get("qty") else f"${i.get('notional')}"
-        print(f"  • {i['side'].upper()} {i['ticker']} ({amt}) — {i['rationale']}")
-
-section("OBJECTIVE 4 — AI co-pilot chat")
-chat = show(client.post("/api/ai/chat", json={
-    "messages": [{"role": "user", "content": "What is my biggest risk right now?"}]
-}))
-if chat:
-    print("  " + chat["reply"].replace("\n", "\n  "))
-
-# ── Objective 6: agentic agent (ours) ─────────────────────────────────────────
-section("OBJECTIVE 6 — Agentic agent: PROPOSE")
-print(f'  Instruction: "{AGENT_INSTRUCTION}"')
-agent = show(client.post("/api/ai/agent", json={
-    "instruction": AGENT_INSTRUCTION, "approve": False
-}))
-if agent:
-    print("  " + agent["message"].replace("\n", "\n  "))
-    for o in agent["proposed_orders"]:
-        amt = f"{o.get('qty')} shares" if o.get("qty") else f"${o.get('notional')}"
-        print(f"  → proposal: {o['side'].upper()} {o['ticker']} ({amt}) — {o.get('rationale', '')}")
-
-    if EXECUTE and agent["proposed_orders"]:
-        section("OBJECTIVE 6 — Agentic agent: EXECUTE (paper)")
-        done = show(client.post("/api/ai/agent", json={
-            "approve": True, "approved_orders": agent["proposed_orders"]
-        }))
-        if done:
-            print("  " + done["message"].replace("\n", "\n  "))
-            for o in done["executed_orders"]:
-                print(f"  ✓ executed: {o['side']} {o['qty']} {o['ticker']} — {o['status']}")
-    elif agent["proposed_orders"]:
-        print("\n  (Run with --execute to actually place these orders — paper money.)")
+# ── 4. Why did this stock move? ───────────────────────────────────────────────
+section("4 — Why did this stock move? (AAPL)")
+w = show(client.get("/api/ai/why-moved/AAPL"))
+if w:
+    if w["move"]["change_pct"] is not None:
+        print(f"  Move: {w['move']['change_pct']:+.2f}%")
+    print("  " + w["explanation"].replace("\n", "\n  "))
 
 print("\nDone. Also open http://localhost:8000/docs for the interactive UI.\n")
