@@ -1,17 +1,17 @@
 """
-AI-features — objectives 4, 5, 6.
+AI features — objectives 4, 5, 6.
 
-Bouwt voort op de bestaande Alpaca-backend (main.py). Dit bestand voegt een
-APIRouter toe die main.py inlaadt met `app.include_router(router)`.
+Builds on top of the existing Alpaca backend (main.py). This file adds an
+APIRouter that main.py loads with `app.include_router(router)`.
 
 Endpoints:
-  GET  /api/portfolio/metrics   -> objective 5: risk metrics / overzicht
-  POST /api/ai/chat             -> objective 4: AI co-pilot (adviserend)
-  POST /api/ai/ideas            -> objective 4: gestructureerde trade-ideeen
-  GET  /api/ai/review           -> objective 4/5: portfolio-analyse in gewone taal
-  POST /api/ai/agent            -> objective 6: agentic agent (voorstel -> goedkeuren -> uitvoeren)
+  GET  /api/portfolio/metrics   -> objective 5: risk metrics / overview
+  POST /api/ai/chat             -> objective 4: AI co-pilot (advisory)
+  POST /api/ai/ideas            -> objective 4: structured trade ideas
+  GET  /api/ai/review           -> objective 4/5: portfolio analysis in plain language
+  POST /api/ai/agent            -> objective 6: agentic agent (propose -> approve -> execute)
 
-Secret nodig: ANTHROPIC_API_KEY (+ de bestaande ALPACA_* keys).
+Needs secret: ANTHROPIC_API_KEY (plus the existing ALPACA_* keys).
 """
 import os
 from typing import Optional
@@ -30,15 +30,15 @@ import ai_prompts as P
 
 router = APIRouter()
 
-# Eigen client-instanties (zelfde keys als main.py) — houdt deze module losgekoppeld.
+# Own client instances (same keys as main.py) — keeps this module decoupled.
 _trading = TradingClient(os.getenv("ALPACA_API_KEY"), os.getenv("ALPACA_SECRET_KEY"), paper=True)
 _data = StockHistoricalDataClient(os.getenv("ALPACA_API_KEY"), os.getenv("ALPACA_SECRET_KEY"))
-_claude = anthropic.Anthropic()  # leest ANTHROPIC_API_KEY uit de omgeving
+_claude = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY from the environment
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def _build_portfolio() -> dict:
-    """Snapshot van het account in een vorm die de prompts/metrics begrijpen."""
+    """Snapshot of the account in a shape the prompts/metrics understand."""
     a = _trading.get_account()
     positions = [
         {
@@ -74,7 +74,7 @@ def _get_quote(symbol: str) -> dict:
 
 
 def _place_order(o: dict) -> dict:
-    """Plaats een market order via Alpaca (qty OF notional)."""
+    """Place a market order via Alpaca (qty OR notional)."""
     side = OrderSide.BUY if o["side"].lower() == "buy" else OrderSide.SELL
     kwargs = {"symbol": o["ticker"].upper(), "side": side, "time_in_force": TimeInForce.DAY}
     if o.get("qty"):
@@ -82,7 +82,7 @@ def _place_order(o: dict) -> dict:
     elif o.get("notional"):
         kwargs["notional"] = o["notional"]
     else:
-        raise HTTPException(400, "order heeft 'qty' of 'notional' nodig")
+        raise HTTPException(400, "order needs 'qty' or 'notional'")
     res = _trading.submit_order(MarketOrderRequest(**kwargs))
     return {
         "id": str(res.id),
@@ -94,7 +94,7 @@ def _place_order(o: dict) -> dict:
     }
 
 
-# ── Objective 5: Risk metrics / overzicht (pure berekening) ───────────────────
+# ── Objective 5: Risk metrics / overview (pure calculation) ───────────────────
 @router.get("/api/portfolio/metrics")
 def portfolio_metrics():
     try:
@@ -138,17 +138,17 @@ class ChatRequest(BaseModel):
 
 @router.post("/api/ai/chat")
 def ai_chat(req: ChatRequest):
-    """Vrije vraag/antwoord over de portefeuille (adviserend)."""
+    """Free-form Q&A about the portfolio (advisory)."""
     try:
         portfolio = _build_portfolio()
-        # Wil je dat de AI live op internet zoekt (actueel nieuws/koersen)? Voeg toe:
+        # Want the AI to search the web live (current news/prices)? Add:
         #   tools=[{"type": "web_search_20260209", "name": "web_search"}]
-        # en handel stop_reason == "pause_turn" af. Voor de demo houden we het
-        # bij Alpaca-data + de kennis van het model.
+        # and handle stop_reason == "pause_turn". For the demo we rely on
+        # Alpaca data + the model's own knowledge.
         resp = _claude.messages.create(
             model=P.MODEL,
             max_tokens=1500,
-            system=f"{P.COPILOT_SYSTEM}\n\nHuidige portefeuille:\n{P.portfolio_summary(portfolio)}",
+            system=f"{P.COPILOT_SYSTEM}\n\nCurrent portfolio:\n{P.portfolio_summary(portfolio)}",
             messages=[{"role": m.role, "content": m.content} for m in req.messages],
         )
         return {"reply": _text_of(resp.content)}
@@ -158,7 +158,7 @@ def ai_chat(req: ChatRequest):
 
 @router.post("/api/ai/ideas")
 def ai_ideas():
-    """Gestructureerde trade-ideeen via een tool."""
+    """Structured trade ideas via a tool."""
     try:
         portfolio = _build_portfolio()
         resp = _claude.messages.create(
@@ -168,20 +168,20 @@ def ai_ideas():
             tool_choice={"type": "any"},
             tools=[{
                 "name": "propose_orders",
-                "description": "Stel een trade-idee voor (koop of verkoop).",
+                "description": "Propose a trade idea (buy or sell).",
                 "input_schema": {
                     "type": "object",
                     "properties": {
                         "ticker": {"type": "string"},
                         "side": {"type": "string", "enum": ["buy", "sell"]},
-                        "qty": {"type": "number", "description": "aantal aandelen (of notional)"},
-                        "notional": {"type": "number", "description": "bedrag in dollars (of qty)"},
-                        "rationale": {"type": "string", "description": "korte onderbouwing"},
+                        "qty": {"type": "number", "description": "number of shares (or notional)"},
+                        "notional": {"type": "number", "description": "dollar amount (or qty)"},
+                        "rationale": {"type": "string", "description": "short justification"},
                     },
                     "required": ["ticker", "side", "rationale"],
                 },
             }],
-            messages=[{"role": "user", "content": f"Mijn portefeuille:\n{P.portfolio_summary(portfolio)}\n\nGeef trade-ideeen."}],
+            messages=[{"role": "user", "content": f"My portfolio:\n{P.portfolio_summary(portfolio)}\n\nGive trade ideas."}],
         )
         ideas = [b.input for b in resp.content if b.type == "tool_use" and b.name == "propose_orders"]
         return {"ideas": ideas}
@@ -191,14 +191,14 @@ def ai_ideas():
 
 @router.get("/api/ai/review")
 def ai_review():
-    """Portfolio-analyse in gewone taal (objective 5 narratief)."""
+    """Portfolio analysis in plain language (objective 5 narrative)."""
     try:
         portfolio = _build_portfolio()
         resp = _claude.messages.create(
             model=P.MODEL,
             max_tokens=600,
             system=P.REVIEW_SYSTEM,
-            messages=[{"role": "user", "content": f"Analyseer mijn portefeuille:\n{P.portfolio_summary(portfolio)}"}],
+            messages=[{"role": "user", "content": f"Analyze my portfolio:\n{P.portfolio_summary(portfolio)}"}],
         )
         return {"review": _text_of(resp.content)}
     except Exception as e:
@@ -220,7 +220,7 @@ class AgentRequest(BaseModel):
 
 _QUOTE_TOOL = {
     "name": "get_quote",
-    "description": "Haal de actuele koers van een ticker op.",
+    "description": "Fetch the current price of a ticker.",
     "input_schema": {"type": "object", "properties": {"ticker": {"type": "string"}}, "required": ["ticker"]},
 }
 _ORDER_SCHEMA = {
@@ -234,15 +234,15 @@ _ORDER_SCHEMA = {
     },
     "required": ["ticker", "side", "rationale"],
 }
-_PROPOSE_TOOL = {"name": "propose_order", "description": "Stel een order voor (NIET uitvoeren).", "input_schema": _ORDER_SCHEMA}
-_PLACE_TOOL = {"name": "place_order", "description": "Plaats een order via Alpaca (echt uitvoeren).", "input_schema": _ORDER_SCHEMA}
+_PROPOSE_TOOL = {"name": "propose_order", "description": "Propose an order (do NOT execute).", "input_schema": _ORDER_SCHEMA}
+_PLACE_TOOL = {"name": "place_order", "description": "Place an order via Alpaca (actually execute).", "input_schema": _ORDER_SCHEMA}
 
 @router.post("/api/ai/agent")
 def ai_agent(req: AgentRequest):
     """
     Agentic loop:
-      approve=False -> agent analyseert (get_quote) en STELT orders VOOR (propose_order).
-      approve=True  -> agent VOERT de goedgekeurde orders UIT (place_order) via Alpaca.
+      approve=False -> the agent analyzes (get_quote) and PROPOSES orders (propose_order).
+      approve=True  -> the agent EXECUTES the approved orders (place_order) via Alpaca.
     """
     try:
         portfolio = _build_portfolio()
@@ -251,16 +251,16 @@ def ai_agent(req: AgentRequest):
 
         if req.approve:
             user_content = (
-                f"Mijn portefeuille:\n{P.portfolio_summary(portfolio)}\n\n"
-                f"Goedgekeurde orders om uit te voeren:\n"
+                f"My portfolio:\n{P.portfolio_summary(portfolio)}\n\n"
+                f"Approved orders to execute:\n"
                 + "\n".join(str(o.model_dump()) for o in req.approved_orders)
             )
         else:
-            user_content = f"Mijn portefeuille:\n{P.portfolio_summary(portfolio)}\n\nInstructie: {req.instruction}"
+            user_content = f"My portfolio:\n{P.portfolio_summary(portfolio)}\n\nInstruction: {req.instruction}"
 
         messages = [{"role": "user", "content": user_content}]
 
-        for _ in range(6):  # max 6 rondes
+        for _ in range(6):  # max 6 rounds
             resp = _claude.messages.create(
                 model=P.MODEL,
                 max_tokens=1500,
@@ -281,16 +281,16 @@ def ai_agent(req: AgentRequest):
                     result = _get_quote(block.input["ticker"])
                 elif block.name == "propose_order":
                     proposed.append(block.input)
-                    result = {"ok": "voorstel genoteerd (niet uitgevoerd)"}
+                    result = {"ok": "proposal recorded (not executed)"}
                 elif block.name == "place_order":
                     placed = _place_order(block.input)
                     executed.append(placed)
                     result = placed
                 else:
-                    result = {"error": "onbekende tool"}
+                    result = {"error": "unknown tool"}
                 tool_results.append({"type": "tool_result", "tool_use_id": block.id, "content": str(result)})
             messages.append({"role": "user", "content": tool_results})
 
-        return {"message": "Agent bereikte het maximale aantal stappen.", "proposed_orders": proposed, "executed_orders": executed}
+        return {"message": "Agent reached the maximum number of steps.", "proposed_orders": proposed, "executed_orders": executed}
     except Exception as e:
         raise HTTPException(500, str(e))

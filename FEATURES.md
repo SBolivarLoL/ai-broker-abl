@@ -1,118 +1,118 @@
-# AI Broker — Features (objectives 4, 5, 6) bovenop de basis (1, 2, 3)
+# AI Broker — Features (objectives 4, 5, 6) on top of the base (1, 2, 3)
 
-Dit bestand legt uit **wat** we hebben gebouwd, **hoe** het werkt, **waarom**, en **hoe het eruitziet**.
-Daarmee dekt het meteen **objective 8 (Explainability)**.
+This file explains **what** we built, **how** it works, **why**, and **what it looks like**.
+That also covers **objective 8 (Explainability)**.
 
-## Hoe het in elkaar zit
+## How it fits together
 
 ```
-Lovable frontend (browser)              FastAPI backend (backend/)              Externe API's
+Lovable frontend (browser)              FastAPI backend (backend/)              External APIs
 ──────────────────────────              ─────────────────────────               ─────────────
-fetch("http://localhost:8000/...")  ►   main.py   (obj 1,2,3 — teammate)  ►  Alpaca (account/prijzen/orders)
-                                        ai.py     (obj 4,5,6 — wij)       ►  Alpaca (data) + Claude API
+fetch("http://localhost:8000/...")  ►   main.py   (obj 1,2,3 — teammate)  ►  Alpaca (account/prices/orders)
+                                        ai.py     (obj 4,5,6 — us)        ►  Alpaca (data) + Claude API
 ```
 
-- **Eén backend.** Onze features zijn FastAPI-endpoints in `backend/ai.py`, ingehaakt in
-  `main.py` met `app.include_router(ai_router)`. We hebben de basis van de teammate **niet** herschreven.
-- **Keys staan server-side** in `.env` (repo-root, **gitignored**): `ALPACA_API_KEY`,
-  `ALPACA_SECRET_KEY`, `ANTHROPIC_API_KEY`. Nooit in de browser, nooit in git.
-- **Model:** `claude-sonnet-4-6` (snel + goedkoop genoeg; zie `ai_prompts.py`).
+- **One backend.** Our features are FastAPI endpoints in `backend/ai.py`, wired into
+  `main.py` with `app.include_router(ai_router)`. We did not rewrite the teammate's base.
+- **Keys live server-side** in `.env` (repo root, **gitignored**): `ALPACA_API_KEY`,
+  `ALPACA_SECRET_KEY`, `ANTHROPIC_API_KEY`. Never in the browser, never in git.
+- **Model:** `claude-sonnet-4-6` (fast + cheap enough; see `ai_prompts.py`).
 
-## Databronnen (waar komt de info vandaan?)
+## Data sources (where does the info come from?)
 
-| Wat | Bron |
-|-----|------|
-| Koersen, posities, orders | **Alpaca** (al gekoppeld in `main.py`) |
-| Redeneren / ideeën / analyse | **Claude API** |
-| (optioneel) actueel nieuws | Claude `web_search`-tool — aan te zetten in `ai.py` (`/api/ai/chat`) |
+| What | Source |
+|------|--------|
+| Prices, positions, orders | **Alpaca** (already wired in `main.py`) |
+| Reasoning / ideas / analysis | **Claude API** |
+| (optional) current news | Claude `web_search` tool — can be enabled in `ai.py` (`/api/ai/chat`) |
 
-Je hoeft zelf geen data te scrapen: Alpaca levert markt+portfolio, Claude doet het denkwerk.
+You don't scrape anything yourself: Alpaca provides market+portfolio, Claude does the thinking.
 
-## Onze endpoints — wat ze doen en hoe ze eruitzien
+## Our endpoints — what they do and what they look like
 
 ### Objective 5 — Portfolio Intelligence (risk metrics)
-`GET /api/portfolio/metrics` — pure berekening op je Alpaca-posities, geen AI nodig.
+`GET /api/portfolio/metrics` — pure calculation on your Alpaca positions, no AI needed.
 ```json
 {
-  "total_value": 10182.3, "cash_pct": 41.7, "positions_count": 3,
-  "largest_position_pct": 26.7, "top_holding": "NVDA",
-  "diversification_score": 64, "day_pl": 423.7, "day_pl_pct": 4.1
+  "total_value": 100000, "cash_pct": 100, "positions_count": 0,
+  "largest_position_pct": 0, "top_holding": "—",
+  "diversification_score": 100, "day_pl": 0, "day_pl_pct": 0
 }
 ```
 
-### Objective 4 — AI Co-pilot (adviserend, plaatst NOOIT orders)
-`POST /api/ai/chat` — vrije vraag/antwoord over je portefeuille.
+### Objective 4 — AI Co-pilot (advisory, NEVER places orders)
+`POST /api/ai/chat` — free-form Q&A about your portfolio.
 ```bash
 curl -X POST localhost:8000/api/ai/chat -H "Content-Type: application/json" \
-  -d '{"messages":[{"role":"user","content":"Hoe staat mijn spreiding ervoor?"}]}'
-# -> { "reply": "Je portefeuille leunt zwaar op NVDA (27%)..." }
+  -d '{"messages":[{"role":"user","content":"What is my biggest risk?"}]}'
+# -> { "reply": "Your portfolio is 100% cash..." }
 ```
 
-`POST /api/ai/ideas` — gestructureerde trade-ideeën (Claude roept een tool aan).
+`POST /api/ai/ideas` — structured trade ideas (Claude calls a tool).
 ```json
 { "ideas": [
-  { "ticker": "GOOGL", "side": "buy", "notional": 500, "rationale": "Spreiding richting..." },
-  { "ticker": "TSLA",  "side": "sell", "qty": 2,        "rationale": "Concentratie verlagen..." }
+  { "ticker": "SPY", "side": "buy", "notional": 30000, "rationale": "Broad market base..." }
 ]}
 ```
 
-`GET /api/ai/review` — portefeuille-analyse in gewone taal (brug tussen obj 4 en 5).
-```json
-{ "review": "Je portefeuille is geconcentreerd in tech. NVDA is je grootste positie..." }
-```
+`GET /api/ai/review` — portfolio analysis in plain language (bridge between obj 4 and 5).
 
-### Objective 6 — Agentic trading agent
-`POST /api/ai/agent` — agentic loop met tool-use. Twee fases:
+### Objective 6 — Agentic trading agent  ← "tell the AI to buy stocks"
+`POST /api/ai/agent` — agentic loop with tool use. Two phases:
 
-1. **Voorstellen** (`approve=false`): de agent haalt koersen op (`get_quote`) en stelt orders voor.
+1. **Propose** (`approve=false`): you give a plain-English instruction; the agent fetches
+   quotes (`get_quote`) and proposes orders.
 ```bash
 curl -X POST localhost:8000/api/ai/agent -H "Content-Type: application/json" \
-  -d '{"instruction":"Verlaag mijn risico","approve":false}'
-# -> { "message":"Ik stel voor...", "proposed_orders":[ {...} ], "executed_orders":[] }
+  -d '{"instruction":"Buy $20,000 of AAPL and $10,000 of NVDA","approve":false}'
+# -> { "message":"I propose...", "proposed_orders":[ {...} ], "executed_orders":[] }
 ```
-2. **Uitvoeren** (`approve=true`): jij stuurt de goedgekeurde orders terug; de agent plaatst ze via Alpaca.
+2. **Execute** (`approve=true`): you send the approved orders back; the agent places them via Alpaca.
 ```bash
 curl -X POST localhost:8000/api/ai/agent -H "Content-Type: application/json" \
-  -d '{"approve":true,"approved_orders":[{"ticker":"TSLA","side":"sell","qty":2,"rationale":"..."}]}'
-# -> { "message":"Geplaatst.", "proposed_orders":[], "executed_orders":[ {...} ] }
+  -d '{"approve":true,"approved_orders":[{"ticker":"AAPL","side":"buy","notional":20000,"rationale":"..."}]}'
+# -> { "message":"Placed.", "proposed_orders":[], "executed_orders":[ {...} ] }
 ```
 
-Dit is precies "vertel de AI wat je wilt → zeg ja → de AI doet het". **Obj 4 adviseert, obj 6 voert uit.**
-De waarden-/eco-screening (obj 7) zit hier bewust **niet** in — dat is een andere feature.
+This is exactly "tell the AI what you want → say yes → the AI does it". **Obj 4 advises, obj 6 executes.**
+The values/ESG screening (obj 7) is intentionally **not** here — that's a separate feature.
 
-## Hoe het er voor de gebruiker uitziet (Lovable frontend)
+## What it looks like for the user (Lovable frontend)
 
-De Lovable-site rendert deze endpoints als 4 panelen:
-- **Market View** (obj 2) → `/api/prices` + `/api/prices/{sym}/bars` (basis van teammate).
-- **AI Co-pilot** (obj 4) → chat-box (`/api/ai/chat`) + knop "Trade-ideeën" (`/api/ai/ideas`).
-- **Portfolio Intelligence** (obj 5) → metric-cards (`/api/portfolio/metrics`) + knop "Leg uit met AI" (`/api/ai/review`).
-- **Trading Agent** (obj 6) → instructie-veld → lijst voorgestelde orders → groene "Goedkeuren & uitvoeren"-knop.
+The Lovable site renders these endpoints as 4 panels:
+- **Market View** (obj 2) → `/api/prices` + `/api/prices/{sym}/bars` (teammate's base).
+- **AI Co-pilot** (obj 4) → chat box (`/api/ai/chat`) + "Trade ideas" button (`/api/ai/ideas`).
+- **Portfolio Intelligence** (obj 5) → metric cards (`/api/portfolio/metrics`) + "Explain with AI" (`/api/ai/review`).
+- **Trading Agent** (obj 6) → instruction field → list of proposed orders → green "Approve & execute" button.
 
-In Lovable wijs je de fetch-base aan naar de backend-URL (lokaal `http://localhost:8000`).
+In Lovable you point the fetch base URL at the backend (locally `http://localhost:8000`).
 
-## Draaien (lokaal)
+## Run it (locally)
 
 ```bash
 pip install -r backend/requirements.txt
-# .env in repo-root invullen (ALPACA_* staan er al; vul ANTHROPIC_API_KEY in)
-./run.sh                      # start op http://localhost:8000
-open http://localhost:8000/docs   # interactieve Swagger-UI om alles te testen
+# fill in .env in the repo root (ALPACA_* + ANTHROPIC_API_KEY)
+python backend/demo.py            # shows obj 1,2,4,5,6 in one run
+python backend/demo.py --execute  # also lets the agent actually place a paper order
+# or the clickable UI:
+./run.sh                          # http://localhost:8000
+open http://localhost:8000/docs   # Swagger: try every endpoint
 ```
 
-> ⚠️ In een sandbox met egress-restricties geeft Alpaca/Claude een netwerk-error
-> ("host not in allowlist"). Lokaal of in een omgeving met internet werkt het wel.
+> ⚠️ In a sandbox with egress restrictions Alpaca/Claude returns a network error
+> ("host not in allowlist"). Locally, or in an environment with internet, it works.
 
-## Belangrijke ontwerpkeuzes (waarom)
+## Key design choices (why)
 
-- **AI als losse router (`ai.py`)** → we raken de basis van de teammate nauwelijks aan (1 regel in `main.py`).
-- **`claude-sonnet-4-6`** i.p.v. Opus → snel en goedkoop, ruim voldoende voor deze taken.
-- **Obj 4 plaatst nooit orders; obj 6 wel (na goedkeuring)** → duidelijke scheiding advies vs. agentic.
-- **Risk metrics in pure Python** → geen AI-call nodig, instant en gratis.
-- **Keys in gitignored `.env`** → nooit in git, nooit in de browser.
+- **AI as a separate router (`ai.py`)** → we barely touch the teammate's base (1 line in `main.py`).
+- **`claude-sonnet-4-6`** instead of Opus → fast and cheap, plenty for these tasks.
+- **Obj 4 never places orders; obj 6 does (after approval)** → clear split advisory vs. agentic.
+- **Risk metrics in pure Python** → no AI call needed, instant and free.
+- **Keys in a gitignored `.env`** → never in git, never in the browser.
 
-## Status / nog te doen
+## Status / to do
 
-- [ ] `ANTHROPIC_API_KEY` invullen in `.env`
-- [ ] (Alpaca paper keys staan al lokaal; in de chat gedeelde keys: overweeg te regenereren)
-- [ ] Lovable-frontend de 4 panelen op de backend laten wijzen
-- [ ] Optioneel: `web_search`-tool aanzetten in `/api/ai/chat` voor live nieuws
+- [ ] Fill in `ANTHROPIC_API_KEY` in `.env`
+- [ ] Regenerate the keys that were shared in chat (Alpaca + Anthropic) and put the new ones in `.env`
+- [ ] Point the Lovable frontend's 4 panels at the backend
+- [ ] Optional: enable the `web_search` tool in `/api/ai/chat` for live news
