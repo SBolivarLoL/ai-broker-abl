@@ -34,6 +34,9 @@ The server runs at `http://localhost:8000`.
 
 ## Documentation
 
+- Platform overview: `docs/PLATFORM.md`
+- Explainability (how every feature works and why it was added): `docs/EXPLAINABILITY.md`
+- AI features deep dive: `FEATURES.md`
 - User guide: `docs/USER_GUIDE.md`
 - Developer guide: `docs/DEVELOPER_GUIDE.md`
 - Original Objective 5 implementation notes: `../objective5.md`
